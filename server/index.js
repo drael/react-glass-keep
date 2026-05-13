@@ -9,6 +9,8 @@ const bcrypt = require("bcryptjs");
 const Database = require("better-sqlite3");
 const cors = require("cors");
 const crypto = require("crypto");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 
 // Transformers.js for server-side AI
 let pipeline;
@@ -43,22 +45,49 @@ async function initServerAI() {
 
 const app = express();
 const PORT = Number(process.env.API_PORT || process.env.PORT || 8080);
-const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-please-change";
 const NODE_ENV = process.env.NODE_ENV || "development";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  if (NODE_ENV === "production") {
+    console.error("FATAL: JWT_SECRET environment variable is required in production.");
+    process.exit(1);
+  }
+  console.warn("WARNING: JWT_SECRET not set. Using insecure default. Set JWT_SECRET in production.");
+}
+const FALLBACK_JWT_SECRET = JWT_SECRET || "dev-secret-please-change";
+
+// ---------- Security headers ----------
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+}));
 
 // ---------- Body parsing ----------
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true, limit: "20mb" }));
 
 // ---------- CORS (dev only) ----------
+const ALLOWED_ORIGINS = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
 if (NODE_ENV !== "production") {
   app.use(
     cors({
-      origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
+      origin: ALLOWED_ORIGINS,
       credentials: false,
     })
   );
 }
+
+// ---------- Rate limiting ----------
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { error: "Too many login attempts. Try again in 15 minutes." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // ---------- SQLite ----------
 const dbFile =
@@ -139,8 +168,8 @@ CREATE TABLE IF NOT EXISTS note_collaborators (
       }
     });
     tx();
-  } catch {
-    // ignore if ALTER not supported or already applied
+  } catch (err) {
+    console.warn("User column migration skipped:", err.message);
   }
 })();
 
@@ -164,8 +193,8 @@ CREATE TABLE IF NOT EXISTS note_collaborators (
       }
     });
     tx();
-  } catch {
-    // ignore if ALTER not supported or already applied
+  } catch (err) {
+    console.warn("Notes column migration skipped:", err.message);
   }
 })();
 
@@ -210,8 +239,8 @@ function signToken(user) {
       name: user.name,
       is_admin: !!user.is_admin,
     },
-    JWT_SECRET,
-    { expiresIn: "7d" }
+    FALLBACK_JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRY || "7d" }
   );
 }
 
@@ -220,7 +249,7 @@ function auth(req, res, next) {
   const token = h.startsWith("Bearer ") ? h.slice(7) : null;
   if (!token) return res.status(401).json({ error: "Missing token" });
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(token, FALLBACK_JWT_SECRET);
     req.user = {
       id: payload.uid,
       email: payload.email,
@@ -233,25 +262,59 @@ function auth(req, res, next) {
   }
 }
 
-// Auth that also supports token in query string for EventSource
-function authFromQueryOrHeader(req, res, next) {
+// Temporary token store for SSE (ephemeral, in-memory)
+const sseTokenStore = new Map();
+
+// Exchange a JWT for a short-lived SSE token (avoids putting JWT in URL)
+app.post("/api/events/token", auth, (req, res) => {
+  const sseToken = crypto.randomBytes(32).toString("hex");
+  sseTokenStore.set(sseToken, {
+    userId: req.user.id,
+    email: req.user.email,
+    name: req.user.name,
+    is_admin: req.user.is_admin,
+    expiresAt: Date.now() + 30000,
+  });
+  res.json({ token: sseToken });
+});
+
+function authFromSSETokenOrHeader(req, res, next) {
   const h = req.headers.authorization || "";
   const headerToken = h.startsWith("Bearer ") ? h.slice(7) : null;
   const queryToken = req.query && typeof req.query.token === "string" ? req.query.token : null;
   const token = headerToken || queryToken;
-  if (!token) return res.status(401).json({ error: "Missing token" });
-  try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    req.user = {
-      id: payload.uid,
-      email: payload.email,
-      name: payload.name,
-      is_admin: !!payload.is_admin,
-    };
-    next();
-  } catch {
-    return res.status(401).json({ error: "Invalid token" });
+
+  if (headerToken) {
+    try {
+      const payload = jwt.verify(headerToken, FALLBACK_JWT_SECRET);
+      req.user = {
+        id: payload.uid,
+        email: payload.email,
+        name: payload.name,
+        is_admin: !!payload.is_admin,
+      };
+      return next();
+    } catch {
+      return res.status(401).json({ error: "Invalid token" });
+    }
   }
+
+  if (queryToken) {
+    const session = sseTokenStore.get(queryToken);
+    if (!session || session.expiresAt < Date.now()) {
+      sseTokenStore.delete(queryToken);
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+    req.user = {
+      id: session.userId,
+      email: session.email,
+      name: session.name,
+      is_admin: session.is_admin,
+    };
+    return next();
+  }
+
+  return res.status(401).json({ error: "Missing token" });
 }
 
 const insertUser = db.prepare(
@@ -262,13 +325,16 @@ const insertUser = db.prepare(
 (function seedDefaultAdmin() {
   const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get().count;
   if (userCount === 0) {
-    const adminEmail = "admin";
-    const adminPass = "admin";
+    const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || "admin";
+    const adminPass = process.env.DEFAULT_ADMIN_PASSWORD || "admin";
+    if (!process.env.DEFAULT_ADMIN_PASSWORD) {
+      console.warn("WARNING: Using default admin password. Set DEFAULT_ADMIN_PASSWORD env var in production.");
+    }
     const hash = bcrypt.hashSync(adminPass, 10);
     const info = insertUser.run("Admin", adminEmail, hash, nowISO());
     const mkAdmin = db.prepare("UPDATE users SET is_admin=1 WHERE id=?");
     mkAdmin.run(info.lastInsertRowid);
-    console.log(`Default admin user created: ${adminEmail} / ${adminPass}`);
+    console.log(`Default admin user created: ${adminEmail}`);
   }
 })();
 const getUserById = db.prepare("SELECT * FROM users WHERE id = ?");
@@ -409,7 +475,8 @@ function getCollaboratorUserIdsForNote(noteId) {
   try {
     const rows = getNoteCollaborators.all(noteId) || [];
     return rows.map((r) => r.id);
-  } catch {
+  } catch (err) {
+    console.warn("getCollaboratorUserIdsForNote error:", err.message);
     return [];
   }
 }
@@ -421,19 +488,22 @@ function broadcastNoteUpdated(noteId) {
     const recipientIds = new Set([note.user_id, ...getCollaboratorUserIdsForNote(noteId)]);
     const evt = { type: "note_updated", noteId };
     for (const uid of recipientIds) sendEventToUser(uid, evt);
-  } catch { }
+  } catch (err) {
+    console.warn("broadcastNoteUpdated error:", err.message);
+  }
 }
 
-app.get("/api/events", authFromQueryOrHeader, (req, res) => {
+app.get("/api/events", authFromSSETokenOrHeader, (req, res) => {
   // SSE headers
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   // Help Nginx/Proxies not to buffer SSE
   try { res.setHeader("X-Accel-Buffering", "no"); } catch { }
-  // If served cross-origin (e.g. static site + separate API host), allow EventSource
-  if (req.headers.origin) {
-    try { res.setHeader("Access-Control-Allow-Origin", req.headers.origin); } catch { }
+  // Only allow specific origins for CORS
+  const origin = req.headers.origin;
+  if (origin && (ALLOWED_ORIGINS.includes(origin) || NODE_ENV !== "production")) {
+    try { res.setHeader("Access-Control-Allow-Origin", origin); } catch { }
   }
   res.flushHeaders?.();
 
@@ -462,15 +532,18 @@ app.get("/api/events", authFromQueryOrHeader, (req, res) => {
 });
 
 // ---------- Auth ----------
-app.post("/api/register", (req, res) => {
+app.post("/api/register", authLimiter, (req, res) => {
   // Check if new account creation is allowed
-  if (!adminSettings.allowNewAccounts) {
+  if (!readAdminSettings().allowNewAccounts) {
     return res.status(403).json({ error: "New account creation is currently disabled." });
   }
 
   const { name, email, password } = req.body || {};
   if (!email || !password)
     return res.status(400).json({ error: "Email and password are required." });
+  if (typeof password !== "string" || password.length < 6) {
+    return res.status(400).json({ error: "Password must be at least 6 characters." });
+  }
   if (getUserByEmail.get(email))
     return res.status(409).json({ error: "Email already registered." });
 
@@ -488,12 +561,11 @@ app.post("/api/register", (req, res) => {
   });
 });
 
-app.post("/api/login", (req, res) => {
+app.post("/api/login", authLimiter, (req, res) => {
   const { email, password } = req.body || {};
   const user = email ? getUserByEmail.get(email) : null;
-  if (!user) return res.status(401).json({ error: "No account found for that email." });
-  if (!bcrypt.compareSync(password || "", user.password_hash)) {
-    return res.status(401).json({ error: "Incorrect password." });
+  if (!user || !bcrypt.compareSync(password || "", user.password_hash)) {
+    return res.status(401).json({ error: "Invalid email or password." });
   }
   const token = signToken(user);
   res.json({
@@ -528,7 +600,7 @@ app.post("/api/secret-key", auth, (req, res) => {
 });
 
 // Login with secret key
-app.post("/api/login/secret", (req, res) => {
+app.post("/api/login/secret", authLimiter, (req, res) => {
   const { key } = req.body || {};
   if (!key || typeof key !== "string" || key.length < 16) {
     return res.status(400).json({ error: "Invalid key." });
@@ -984,30 +1056,44 @@ function adminOnly(req, res, next) {
   next();
 }
 
-// Admin settings storage (in-memory for now, could be moved to DB)
-let adminSettings = {
-  allowNewAccounts: process.env.ALLOW_REGISTRATION === "true" || false
-};
+// Admin settings (persisted in DB)
+db.exec(`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+
+const getAdminSettings = db.prepare(
+  "SELECT value FROM app_settings WHERE key = 'allowNewAccounts'"
+);
+const setAdminSettings = db.prepare(
+  "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)"
+);
+
+// Seed default
+const existingSetting = getAdminSettings.get();
+if (!existingSetting) {
+  setAdminSettings.run("allowNewAccounts", process.env.ALLOW_REGISTRATION === "true" ? "true" : "false");
+}
+
+function readAdminSettings() {
+  const row = getAdminSettings.get();
+  return { allowNewAccounts: row?.value === "true" };
+}
 
 // Get admin settings
 app.get("/api/admin/settings", auth, adminOnly, (_req, res) => {
-  res.json(adminSettings);
+  res.json(readAdminSettings());
 });
 
 // Update admin settings
 app.patch("/api/admin/settings", auth, adminOnly, (req, res) => {
   const { allowNewAccounts } = req.body || {};
-
   if (typeof allowNewAccounts === 'boolean') {
-    adminSettings.allowNewAccounts = allowNewAccounts;
+    setAdminSettings.run("allowNewAccounts", allowNewAccounts ? "true" : "false");
   }
-
-  res.json(adminSettings);
+  res.json(readAdminSettings());
 });
 
 // Check if new account creation is allowed (public endpoint)
 app.get("/api/admin/allow-registration", (_req, res) => {
-  res.json({ allowNewAccounts: adminSettings.allowNewAccounts });
+  res.json(readAdminSettings());
 });
 
 // Include a rough storage usage estimate (bytes) for each user
@@ -1245,7 +1331,7 @@ app.post("/api/ai/ask", auth, async (req, res) => {
       const t = (n.title || "").toLowerCase();
       const c = (n.content || "").toLowerCase();
 
-      return words.some(word => t.includes(word) || c.includes(word) || word.includes(t) && t.length > 2);
+      return words.some(word => t.includes(word) || c.includes(word));
     }).slice(0, 5); // Take up to 5 relevant notes
 
     const notesToUse = relevantNotes.length > 0 ? relevantNotes : (notes || []).slice(0, 4);
@@ -1268,7 +1354,7 @@ ${question}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
       max_new_tokens: 300,
       temperature: 0.1,
       repetition_penalty: 1.1,
-      do_sample: false,
+      do_sample: true,
       return_full_text: false,
     });
 

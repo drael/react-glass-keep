@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState, useLayoutEffect, useCallba
 import { createPortal } from "react-dom";
 import { askAI } from "./ai";
 import { marked as markedParser } from "marked";
+import DOMPurify from "dompurify";
+import JSZip from "jszip";
 import DrawingCanvas from "./DrawingCanvas";
 
 // Ensure we can call marked.parse(...)
@@ -358,10 +360,8 @@ const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const mdToPlain = (md) => {
   try {
     const html = marked.parse(md || "");
-    const tmp = document.createElement("div");
-    tmp.innerHTML = html;
-    const text = tmp.textContent || tmp.innerText || "";
-    return text.replace(/\n{3,}/g, "\n\n");
+    const sanitized = DOMPurify.sanitize(html, { ALLOWED_TAGS: [] });
+    return sanitized.replace(/\n{3,}/g, "\n\n");
   } catch (e) {
     return md || "";
   }
@@ -420,19 +420,8 @@ const triggerBlobDownload = (filename, blob) => {
   a.click(); a.remove(); URL.revokeObjectURL(url);
 };
 
-// Lazy-load JSZip for generating ZIP files client-side
 async function ensureJSZip() {
-  if (window.JSZip) return window.JSZip;
-  await new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js";
-    s.async = true;
-    s.onload = resolve;
-    s.onerror = () => reject(new Error("Failed to load JSZip."));
-    document.head.appendChild(s);
-  });
-  if (!window.JSZip) throw new Error("JSZip not available");
-  return window.JSZip;
+  return JSZip;
 }
 
 // --- Image filename helpers (fix double extensions) ---
@@ -2480,7 +2469,7 @@ function NotesUI({
               ) : (
                 <div
                   className="text-gray-800 dark:text-gray-200 note-content"
-                  dangerouslySetInnerHTML={{ __html: marked.parse(aiResponse || "") }}
+                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(aiResponse || "")) }}
                 />
               )}
             </div>
@@ -3493,10 +3482,10 @@ export default function App() {
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
-  const navigate = (to) => {
+  const navigate = useCallback((to) => {
     if (window.location.hash !== to) window.location.hash = to;
     setRoute(to);
-  };
+  }, []);
 
   // Theme init/toggle
   useEffect(() => {
@@ -3613,18 +3602,21 @@ export default function App() {
     }
   };
 
+  const loadNotesReqId = useRef(0);
+
   const loadNotes = async () => {
     if (!token) return;
+    const reqId = ++loadNotesReqId.current;
     setNotesLoading(true);
 
     try {
       const data = await api("/notes", { token });
-      console.log("Notes loaded from server:", data);
+      if (reqId !== loadNotesReqId.current) return;
       const notesArray = Array.isArray(data) ? data : [];
       setNotes(sortNotesByRecency(notesArray));
       persistNotesCache(notesArray);
     } catch (error) {
-      console.error("Error loading notes from server:", error);
+      if (reqId !== loadNotesReqId.current) return;
       // Try to load from cache as fallback
       try {
         const cachedData = localStorage.getItem(NOTES_CACHE_KEY);
@@ -3635,55 +3627,48 @@ export default function App() {
           setNotes([]);
         }
       } catch (cacheError) {
-        console.error("Error loading from cache:", cacheError);
         setNotes([]);
       }
     } finally {
-      setNotesLoading(false);
+      if (reqId === loadNotesReqId.current) {
+        setNotesLoading(false);
+      }
     }
   };
 
   // Load archived notes
   const loadArchivedNotes = async () => {
     if (!token) return;
+    const reqId = ++loadNotesReqId.current;
     setNotesLoading(true);
 
-    console.log("Loading archived notes, checking cache...");
-    // First, try to load from cache immediately for better UX
     let hasCachedData = false;
     try {
       const cachedData = localStorage.getItem(ARCHIVED_NOTES_CACHE_KEY);
       if (cachedData) {
         const cachedNotes = JSON.parse(cachedData);
-        console.log("Found cached archived notes:", cachedNotes.length);
-        setNotes(sortNotesByRecency(cachedNotes));
+        if (reqId === loadNotesReqId.current) {
+          setNotes(sortNotesByRecency(cachedNotes));
+        }
         hasCachedData = true;
-      } else {
-        console.log("No cached archived notes found");
       }
     } catch (cacheError) {
-      console.error("Error loading archived notes from cache:", cacheError);
     }
 
     try {
       const data = await api("/notes/archived", { token });
-      console.log("Archived notes loaded from server:", data);
+      if (reqId !== loadNotesReqId.current) return;
       const notesArray = Array.isArray(data) ? data : [];
       setNotes(sortNotesByRecency(notesArray));
 
-      // Cache the data
       try {
         localStorage.setItem(ARCHIVED_NOTES_CACHE_KEY, JSON.stringify(notesArray));
         localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-        console.log("Cached", notesArray.length, "archived notes");
       } catch (error) {
-        console.error("Error caching archived notes:", error);
       }
     } catch (error) {
-      console.error("Error loading archived notes from server:", error);
-      // If we don't have cached data, set empty array
+      if (reqId !== loadNotesReqId.current) return;
       if (!hasCachedData) {
-        console.log("No cached data and server error, setting empty array");
         setNotes([]);
       }
     } finally {
@@ -3729,10 +3714,16 @@ export default function App() {
     const maxReconnectAttempts = 10;
     const baseReconnectDelay = 1000;
 
-    const connectSSE = () => {
+    const connectSSE = async () => {
       try {
+        let sseToken = token;
+        try {
+          const resp = await api("/events/token", { method: "POST", token });
+          if (resp?.token) sseToken = resp.token;
+        } catch {
+        }
         const url = new URL(`${window.location.origin}/api/events`);
-        url.searchParams.set("token", token);
+        url.searchParams.set("token", sseToken);
         url.searchParams.set("_t", Date.now()); // Cache buster for PWA
         es = new EventSource(url.toString());
 
@@ -5644,7 +5635,7 @@ export default function App() {
                   <div
                     ref={noteViewRef}
                     className="note-content note-content--dense whitespace-pre-wrap"
-                    dangerouslySetInnerHTML={{ __html: marked.parse(mBody || "") }}
+                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(mBody || "")) }}
                   />
                 ) : (
                   <div className="relative min-h-[160px]">
@@ -6377,7 +6368,7 @@ export default function App() {
   // Redirect if already logged in
   useEffect(() => {
     if (currentUser?.email && route !== "#/notes" && route !== "#/admin") navigate("#/notes");
-  }, [currentUser]); // eslint-disable-line
+  }, [currentUser, route, navigate]);
 
   // Close sidebar when navigating away or opening modal
   useEffect(() => {

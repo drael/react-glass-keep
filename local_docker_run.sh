@@ -18,7 +18,7 @@ docker run -d \
   -p 8080:8080 \
   -e NODE_ENV=production \
   -e API_PORT=8080 \
-  -e JWT_SECRET=dev-please-change \
+  -e JWT_SECRET="replace-with-a-long-random-string" \
   -e DB_FILE=/app/data/notes.db \
   -e ADMIN_EMAILS=adminniku \
   -v "$HOME/.glass-keep:/app/data" \
