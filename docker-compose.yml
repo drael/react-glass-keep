@@ -1,0 +1,21 @@
+version: "3.8"
+services:
+  app:
+    build: .
+    container_name: glass-keep-fixed
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_PORT: "8080"
+      JWT_SECRET: change-this-to-a-long-random-string-in-production
+      DB_FILE: /app/data/notes.db
+      ADMIN_EMAILS: admin
+      ALLOW_REGISTRATION: "true"
+      DEFAULT_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - glass-keep-data:/app/data
+
+volumes:
+  glass-keep-data:
