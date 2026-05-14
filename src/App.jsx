@@ -148,9 +148,11 @@ const COLOR_ORDER = [
   "mauve",
 ];
 const solid = (rgba) => (typeof rgba === "string" ? rgba.replace("0.6", "1") : rgba);
-const bgFor = (colorKey, dark) =>
-  (dark ? DARK_COLORS : LIGHT_COLORS)[colorKey] ||
-  (dark ? DARK_COLORS.default : LIGHT_COLORS.default);
+const bgFor = (colorKey, dark, noGlass) => {
+  const c = (dark ? DARK_COLORS : LIGHT_COLORS)[colorKey] ||
+    (dark ? DARK_COLORS.default : LIGHT_COLORS.default);
+  return noGlass ? c.replace("0.6", "1") : c;
+};
 
 /** ---------- Modal light boost ---------- */
 const parseRGBA = (str) => {
@@ -165,8 +167,9 @@ const mixWithWhite = (rgbaStr, whiteRatio = 0.8, outAlpha = 0.92) => {
   const bb = Math.round(255 * whiteRatio + b * (1 - whiteRatio));
   return `rgba(${rr}, ${gg}, ${bb}, ${outAlpha})`;
 };
-const modalBgFor = (colorKey, dark) => {
-  const base = bgFor(colorKey, dark);
+const modalBgFor = (colorKey, dark, noGlass) => {
+  const base = bgFor(colorKey, dark, noGlass);
+  if (noGlass) return base.replace("0.6", "1");
   if (dark) return base;
   return mixWithWhite(solid(base), 0.8, 0.92);
 };
@@ -496,6 +499,18 @@ body {
   border: 1px solid var(--border-light);
   transition: all 0.3s ease;
   break-inside: avoid;
+}
+.no-glass {
+  --card-bg-light: rgba(255, 255, 255, 1);
+  --card-bg-dark: rgba(40, 40, 40, 1);
+  --border-light: rgba(209, 213, 219, 0.5);
+  --border-dark: rgba(75, 85, 99, 0.5);
+}
+.no-glass .glass-card,
+.no-glass .modal-scrim,
+.no-glass .modal-header-blur {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 .note-content p { margin-bottom: 0.5rem; }
 .note-content h1, .note-content h2, .note-content h3 { margin-bottom: 0.75rem; font-weight: 600; }
@@ -1132,7 +1147,7 @@ function DrawingPreview({ data, width, height, darkMode = false }) {
 
 /** ---------- Note Card ---------- */
 function NoteCard({
-  n, dark,
+  n, dark, disableTransparency,
   openModal, togglePin,
   // multi-select
   multiMode = false,
@@ -1194,7 +1209,7 @@ function NoteCard({
       }}
       className={`note-card glass-card rounded-xl p-4 mb-6 cursor-pointer transform hover:scale-[1.02] transition-transform duration-200 relative min-h-[54px] group ${multiMode && selected ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-transparent' : ''
         }`}
-      style={{ backgroundColor: bgFor(n.color, dark) }}
+      style={{ backgroundColor: bgFor(n.color, dark, disableTransparency) }}
       data-id={n.id}
       data-group={group}
     >
@@ -1240,7 +1255,7 @@ function NoteCard({
         <div className="absolute top-3 right-3 h-8 opacity-0 group-hover:opacity-100 transition-opacity">
           <div
             className="absolute inset-0 rounded-full"
-            style={{ backgroundColor: bgFor(n.color, dark) }}
+            style={{ backgroundColor: bgFor(n.color, dark, disableTransparency) }}
           />
           <button
             aria-label={n.pinned ? "Unpin note" : "Pin note"}
@@ -1618,7 +1633,7 @@ function TagSidebar({ open, onClose, tagsWithCounts, activeTag, onSelect, dark, 
 }
 
 /** ---------- Settings Panel ---------- */
-function SettingsPanel({ open, onClose, dark, onExportAll, onImportAll, onImportGKeep, onImportMd, onDownloadSecretKey, alwaysShowSidebarOnWide, setAlwaysShowSidebarOnWide, localAiEnabled, setLocalAiEnabled, showGenericConfirm, showToast }) {
+function SettingsPanel({ open, onClose, dark, onExportAll, onImportAll, onImportGKeep, onImportMd, onDownloadSecretKey, alwaysShowSidebarOnWide, setAlwaysShowSidebarOnWide, localAiEnabled, setLocalAiEnabled, disableTransparency, setDisableTransparency, showGenericConfirm, showToast }) {
   // Prevent body scroll when settings panel is open
   React.useEffect(() => {
     if (open) {
@@ -1762,6 +1777,25 @@ function SettingsPanel({ open, onClose, dark, onExportAll, onImportAll, onImport
                 >
                   <span
                     className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${alwaysShowSidebarOnWide ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-medium">Disable note transparency</div>
+                  <div className="text-sm text-gray-500">Make note backgrounds solid for better readability</div>
+                </div>
+                <button
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${disableTransparency
+                    ? 'bg-indigo-600'
+                    : 'bg-gray-300 dark:bg-gray-600'
+                    }`}
+                  onClick={() => setDisableTransparency(!disableTransparency)}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${disableTransparency ? 'translate-x-6' : 'translate-x-1'
                       }`}
                   />
                 </button>
@@ -2146,7 +2180,8 @@ function NotesUI({
   // Settings panel
   openSettingsPanel,
   // AI props
-  localAiEnabled, aiResponse, setAiResponse, isAiLoading, aiLoadingProgress, onAiSearch
+  localAiEnabled, aiResponse, setAiResponse, isAiLoading, aiLoadingProgress, onAiSearch,
+  disableTransparency,
 }) {
   // Multi-select color popover (local UI state)
   const multiColorBtnRef = useRef(null);
@@ -2493,7 +2528,7 @@ function NotesUI({
           ) : (
             <div
               className="glass-card rounded-xl shadow-lg p-4 mb-8 relative"
-              style={{ backgroundColor: bgFor(composerColor, dark) }}
+              style={{ backgroundColor: bgFor(composerColor, dark, disableTransparency) }}
             >
               {/* Collapsed single input */}
               {composerCollapsed ? (
@@ -2675,8 +2710,8 @@ function NotesUI({
                         className="w-6 h-6 rounded-full border-2 border-[var(--border-light)] hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-800 flex items-center justify-center"
                         title="Color"
                         style={{
-                          backgroundColor: composerColor === "default" ? "transparent" : solid(bgFor(composerColor, dark)),
-                          borderColor: composerColor === "default" ? "#d1d5db" : solid(bgFor(composerColor, dark)),
+                          backgroundColor: composerColor === "default" ? "transparent" : solid(bgFor(composerColor, dark, disableTransparency)),
+                          borderColor: composerColor === "default" ? "#d1d5db" : solid(bgFor(composerColor, dark, disableTransparency)),
                         }}
                       >
                         {composerColor === "default" && (
@@ -2777,6 +2812,7 @@ function NotesUI({
                     key={n.id}
                     n={n}
                     dark={dark}
+                    disableTransparency={disableTransparency}
                     openModal={openModal}
                     togglePin={togglePin}
                     multiMode={multiMode}
@@ -2820,6 +2856,7 @@ function NotesUI({
                     key={n.id}
                     n={n}
                     dark={dark}
+                    disableTransparency={disableTransparency}
                     openModal={openModal}
                     togglePin={togglePin}
                     multiMode={multiMode}
@@ -3029,6 +3066,9 @@ export default function App() {
   const [alwaysShowSidebarOnWide, setAlwaysShowSidebarOnWide] = useState(() => {
     try { return localStorage.getItem("sidebarAlwaysVisible") === "true"; } catch (e) { return false; }
   });
+  const [disableTransparency, setDisableTransparency] = useState(() => {
+    try { return localStorage.getItem("glass-keep-no-glass") === "true"; } catch (e) { return false; }
+  });
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     try { return parseInt(localStorage.getItem("sidebarWidth")) || 288; } catch (e) { return 288; }
   });
@@ -3230,6 +3270,10 @@ export default function App() {
     try { localStorage.setItem("localAiEnabled", String(localAiEnabled)); } catch (e) { }
     if (!localAiEnabled) setAiResponse(null);
   }, [localAiEnabled]);
+
+  useEffect(() => {
+    try { localStorage.setItem("glass-keep-no-glass", String(disableTransparency)); } catch (e) { }
+  }, [disableTransparency]);
 
   // Window resize listener for responsive sidebar behavior
   useEffect(() => {
@@ -3502,6 +3546,11 @@ export default function App() {
     document.documentElement.classList.toggle("dark", next);
     localStorage.setItem("glass-keep-dark-mode", String(next));
   };
+
+  // Disable transparency init/sync
+  useEffect(() => {
+    document.documentElement.classList.toggle("no-glass", disableTransparency);
+  }, [disableTransparency]);
 
   // Close sidebar with Escape
   useEffect(() => {
@@ -5451,7 +5500,7 @@ export default function App() {
       >
         <div
           className="glass-card rounded-xl shadow-2xl w-full h-full max-w-none rounded-none sm:w-11/12 sm:max-w-2xl sm:h-[95vh] sm:rounded-xl flex flex-col relative overflow-hidden"
-          style={{ backgroundColor: modalBgFor(mColor, dark) }}
+          style={{ backgroundColor: modalBgFor(mColor, dark, disableTransparency) }}
           onMouseDown={(e) => e.stopPropagation()}
           onMouseUp={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
@@ -5464,7 +5513,7 @@ export default function App() {
             {/* Sticky header (kept single line on desktop, wraps on mobile) */}
             <div
               className="sticky top-0 z-20 px-4 sm:px-6 pt-4 pb-3 modal-header-blur rounded-t-none sm:rounded-t-xl"
-              style={{ backgroundColor: modalBgFor(mColor, dark) }}
+              style={{ backgroundColor: modalBgFor(mColor, dark, disableTransparency) }}
             >
               <div className="flex flex-wrap items-center gap-2">
                 <input
@@ -6003,8 +6052,8 @@ export default function App() {
                     className="w-6 h-6 rounded-full border-2 border-[var(--border-light)] hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-800 flex items-center justify-center"
                     title="Color"
                     style={{
-                      backgroundColor: mColor === "default" ? "transparent" : solid(bgFor(mColor, dark)),
-                      borderColor: mColor === "default" ? "#d1d5db" : solid(bgFor(mColor, dark)),
+                      backgroundColor: mColor === "default" ? "transparent" : solid(bgFor(mColor, dark, disableTransparency)),
+                      borderColor: mColor === "default" ? "#d1d5db" : solid(bgFor(mColor, dark, disableTransparency)),
                     }}
                   >
                     {mColor === "default" && (
@@ -6485,6 +6534,8 @@ export default function App() {
         setAlwaysShowSidebarOnWide={setAlwaysShowSidebarOnWide}
         localAiEnabled={localAiEnabled}
         setLocalAiEnabled={setLocalAiEnabled}
+        disableTransparency={disableTransparency}
+        setDisableTransparency={setDisableTransparency}
         showGenericConfirm={showGenericConfirm}
         showToast={showToast}
       />
@@ -6614,6 +6665,7 @@ export default function App() {
         openAdminPanel={openAdminPanel}
         // Settings panel
         openSettingsPanel={openSettingsPanel}
+        disableTransparency={disableTransparency}
       />
       {modal}
 
