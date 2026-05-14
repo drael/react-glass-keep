@@ -5,6 +5,8 @@ import { marked as markedParser } from "marked";
 import DOMPurify from "dompurify";
 import JSZip from "jszip";
 import DrawingCanvas from "./DrawingCanvas";
+import { getAllNotesFromDb, saveNotesToDb, saveNoteToDb, removeNoteFromDb, clearAllNotesFromDb, addPendingOp, getPendingOps, clearPendingOps } from "./db.js";
+import { processPendingOps } from "./sync.js";
 
 // Ensure we can call marked.parse(...)
 const marked =
@@ -89,7 +91,14 @@ async function api(path, { method = "GET", body, token } = {}) {
     }
 
     // Handle fetch failures (network errors, CORS, etc.)
-    if (error instanceof TypeError && error.message.includes('fetch')) {
+    // Chrome: "Failed to fetch", Safari/iOS: "Load failed", Firefox: "NetworkError..."
+    if (error instanceof TypeError && (
+      error.message.includes('fetch') ||
+      error.message.includes('Load failed') ||
+      error.message.includes('NetworkError') ||
+      error.message.includes('network') ||
+      error.message.includes('cancelled')
+    )) {
       const err = new Error("Network error. Please check your connection.");
       err.status = 0;
       err.isNetworkError = true;
@@ -2204,6 +2213,7 @@ function NotesUI({
   // SSE connection status
   sseConnected,
   isOnline,
+  pendingCount,
   loadNotes,
   loadArchivedNotes,
   // checklist update
@@ -2348,12 +2358,16 @@ function NotesUI({
             </button>
           )}
 
-          {/* Offline indicator */}
-          {!isOnline && (
+          {/* Offline / Pending indicator */}
+          {pendingCount > 0 ? (
+            <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-blue-600/10 text-blue-700 dark:text-blue-300 border border-blue-600/20">
+              {isOnline ? `${pendingCount} pending` : `${pendingCount} pending`}
+            </span>
+          ) : !isOnline ? (
             <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-orange-600/10 text-orange-700 dark:text-orange-300 border border-orange-600/20">
               Offline
             </span>
-          )}
+          ) : null}
         </div>
 
         <div className="flex-grow flex justify-center px-4 sm:px-8">
@@ -2562,23 +2576,13 @@ function NotesUI({
       {activeTagFilter !== TRASH && (
       <div className="px-4 sm:px-6 md:px-8 lg:px-12">
         <div className="max-w-2xl mx-auto">
-          {!isOnline ? (
-            <div className="glass-card rounded-xl shadow-lg p-6 mb-8 text-center">
-              <div className="text-orange-600 dark:text-orange-400 mb-2">
-                <svg className="w-8 h-8 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-semibold mb-2">You're offline</h3>
-              <p className="text-gray-600 dark:text-gray-400">Please go back online to add notes.</p>
-            </div>
-          ) : (
-            <div
-              className="glass-card rounded-xl shadow-lg p-4 mb-8 relative"
-              style={{ backgroundColor: bgFor(composerColor, dark, disableTransparency) }}
-            >
-              {/* Collapsed single input */}
-              {composerCollapsed ? (
+          <div
+            className="glass-card rounded-xl shadow-lg p-4 mb-8 relative"
+            style={{ backgroundColor: bgFor(composerColor, dark, disableTransparency) }}
+          >
+            {/* offline status shown in header bar */}
+            {/* Collapsed single input */}
+            {composerCollapsed ? (
                 <input
                   value={content}
                   onChange={(e) => { }}
@@ -2598,9 +2602,7 @@ function NotesUI({
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
                     placeholder="Title"
-                    disabled={!isOnline}
-                    className={`w-full bg-transparent text-lg font-semibold placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none mb-2 p-2 ${!isOnline ? 'opacity-50 cursor-not-allowed' : ''
-                      }`}
+                    className="w-full bg-transparent text-lg font-semibold placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none mb-2 p-2"
                   />
 
                   {/* Body, Checklist, or Drawing */}
@@ -2611,9 +2613,7 @@ function NotesUI({
                       onChange={(e) => setContent(e.target.value)}
                       onKeyDown={onComposerKeyDown}
                       placeholder="Write a note..."
-                      disabled={!isOnline}
-                      className={`w-full bg-transparent placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none resize-none p-2 ${!isOnline ? 'opacity-50 cursor-not-allowed' : ''
-                        }`}
+                      className="w-full bg-transparent placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none resize-none p-2"
                       rows={1}
                     />
                   ) : composerType === "checklist" ? (
@@ -2624,16 +2624,13 @@ function NotesUI({
                           onChange={(e) => setClInput(e.target.value)}
                           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addComposerItem(); } }}
                           placeholder="List item…"
-                          disabled={!isOnline}
-                          className={`flex-1 bg-transparent placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none p-2 border-b border-[var(--border-light)] ${!isOnline ? 'opacity-50 cursor-not-allowed' : ''
-                            }`}
+                          className="flex-1 bg-transparent placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none p-2 border-b border-[var(--border-light)]"
                         />
                         <button
                           onClick={addComposerItem}
-                          disabled={!isOnline}
                           className={`px-3 py-1.5 rounded-lg whitespace-nowrap ${isOnline
                             ? 'bg-indigo-600 text-white hover:bg-indigo-700'
-                            : 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                            : 'bg-indigo-600 text-white hover:bg-indigo-700'
                             }`}
                         >
                           Add
@@ -2684,9 +2681,7 @@ function NotesUI({
                       onChange={(e) => setTags(e.target.value)}
                       type="text"
                       placeholder="Add tags (comma-separated)"
-                      disabled={!isOnline}
-                      className={`w-full sm:flex-1 bg-transparent text-sm placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none p-2 ${!isOnline ? 'opacity-50 cursor-not-allowed' : ''
-                        }`}
+                      className="w-full sm:flex-1 bg-transparent text-sm placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none p-2"
                     />
 
                     <div className="flex items-center gap-3 flex-wrap sm:flex-nowrap sm:flex-none relative">
@@ -2822,10 +2817,9 @@ function NotesUI({
                       {/* Add Note */}
                       <button
                         onClick={addNote}
-                        disabled={!isOnline}
                         className={`px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-800 transition-colors whitespace-nowrap flex-shrink-0 ${isOnline
                           ? 'bg-indigo-600 text-white hover:bg-indigo-700'
-                          : 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                          : 'bg-indigo-600/70 text-white hover:bg-indigo-700'
                           }`}
                       >
                         Add Note
@@ -2835,7 +2829,6 @@ function NotesUI({
                 </>
               )}
             </div>
-          )}
         </div>
       </div>
       )}
@@ -3343,13 +3336,27 @@ export default function App() {
       confirmText: isTrash ? "Permanently Delete" : "Delete",
       danger: true,
       onConfirm: async () => {
+        let allOffline = true;
         try {
           for (const id of selectedIds) {
             await api(isTrash ? `/notes/${id}/permanent` : `/notes/${id}`, { method: isTrash ? "DELETE" : "DELETE", token });
+            await removeNoteFromDb(id);
+            allOffline = false;
           }
           setNotes((prev) => prev.filter((n) => !selectedIds.includes(String(n.id))));
           onExitMulti();
         } catch (e) {
+          if (e.isNetworkError && allOffline) {
+            for (const id of selectedIds) {
+              await addPendingOp({ type: 'delete', noteId: id, timestamp: Date.now() });
+              await removeNoteFromDb(id);
+            }
+            setNotes((prev) => prev.filter((n) => !selectedIds.includes(String(n.id))));
+            onExitMulti();
+            refreshPendingCount();
+            showToast("Deletes will sync when online", "info");
+            return;
+          }
           alert(e.message || "Bulk delete failed");
         }
       }
@@ -3359,24 +3366,27 @@ export default function App() {
   const onBulkPin = async (pinnedVal) => {
     if (!selectedIds.length) return;
     try {
-      // Optimistic update
       setNotes((prev) => prev.map((n) => (selectedIds.includes(String(n.id)) ? { ...n, pinned: !!pinnedVal } : n)));
-      // Persist in background (best-effort)
       for (const id of selectedIds) {
         await api(`/notes/${id}`, { method: "PATCH", token, body: { pinned: !!pinnedVal } });
       }
-      // Invalidate caches
       invalidateNotesCache();
       invalidateArchivedNotesCache();
-      // Reload fresh data since we invalidated caches
       if (tagFilter === 'ARCHIVED') {
         loadArchivedNotes().catch(() => { });
       } else {
         loadNotes().catch(() => { });
       }
     } catch (e) {
+      if (e.isNetworkError) {
+        for (const id of selectedIds) {
+          await addPendingOp({ type: 'patch', noteId: id, body: { pinned: !!pinnedVal }, timestamp: Date.now() });
+        }
+        refreshPendingCount();
+        showToast("Pin changes will sync when online", "info");
+        return;
+      }
       console.error("Bulk pin failed", e);
-      // Reload appropriate notes based on current view
       if (tagFilter === 'ARCHIVED') {
         loadArchivedNotes().catch(() => { });
       } else {
@@ -3388,32 +3398,34 @@ export default function App() {
   const onBulkArchive = async () => {
     if (!selectedIds.length) return;
 
-    // Determine if we're archiving or unarchiving based on current view
     const isArchiving = tagFilter !== 'ARCHIVED';
     const archivedValue = isArchiving;
 
     try {
-      // Optimistic update - remove from current view
       setNotes((prev) => prev.filter((n) => !selectedIds.includes(String(n.id))));
-      // Persist in background (best-effort)
       for (const id of selectedIds) {
         await api(`/notes/${id}/archive`, { method: "POST", token, body: { archived: archivedValue } });
       }
-      // Invalidate caches
       invalidateNotesCache();
       invalidateArchivedNotesCache();
 
-      // If we just unarchived notes from archived view, switch to regular notes view
       if (!isArchiving && tagFilter === 'ARCHIVED') {
         setTagFilter(null);
         await loadNotes();
       }
 
-      // Exit multi-select mode
       onExitMulti();
     } catch (e) {
+      if (e.isNetworkError) {
+        for (const id of selectedIds) {
+          await addPendingOp({ type: 'archive', noteId: id, archived: archivedValue, timestamp: Date.now() });
+        }
+        refreshPendingCount();
+        onExitMulti();
+        showToast("Archive changes will sync when online", "info");
+        return;
+      }
       console.error(`Bulk ${isArchiving ? 'archive' : 'unarchive'} failed`, e);
-      // Reload notes on failure
       if (tagFilter === 'ARCHIVED') {
         loadArchivedNotes().catch(() => { });
       } else {
@@ -3449,7 +3461,14 @@ export default function App() {
       // Invalidate caches since we modified the note
       invalidateNotesCache();
       invalidateArchivedNotesCache();
+      await saveNoteToDb(updatedNote);
     } catch (error) {
+      if (error.isNetworkError) {
+        await saveNoteToDb({ ...updatedNote, _offline: true });
+        await addPendingOp({ type: 'patch', noteId, body: { items: updatedItems, type: "checklist", content: "" }, timestamp: Date.now() });
+        refreshPendingCount();
+        return;
+      }
       console.error("Failed to update checklist item:", error);
       // Revert the optimistic update on error
       setNotes(prev => prev.map(n =>
@@ -3466,6 +3485,13 @@ export default function App() {
         await api(`/notes/${id}`, { method: "PATCH", token, body: { color: colorName } });
       }
     } catch (e) {
+      if (e.isNetworkError) {
+        for (const id of selectedIds) {
+          await addPendingOp({ type: 'patch', noteId: id, body: { color: colorName }, timestamp: Date.now() });
+        }
+        refreshPendingCount();
+        return;
+      }
       console.error("Bulk color failed", e);
       loadNotes().catch(() => { });
     }
@@ -3498,6 +3524,16 @@ export default function App() {
   // SSE connection status
   const [sseConnected, setSseConnected] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [pendingCount, setPendingCount] = useState(0);
+
+  const refreshPendingCount = useCallback(async () => {
+    try {
+      const ops = await getPendingOps();
+      setPendingCount(ops.length);
+    } catch (e) {
+      setPendingCount(0);
+    }
+  }, []);
 
   // Admin panel state
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
@@ -3570,6 +3606,14 @@ export default function App() {
     style.innerHTML = globalCSS;
     document.head.appendChild(style);
     return () => style.remove();
+  }, []);
+
+  // Request persistent storage to prevent data eviction (mobile only)
+  useEffect(() => {
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if (isMobile && navigator.storage?.persist) {
+      navigator.storage.persist().catch(() => {});
+    }
   }, []);
 
   // Router
@@ -3646,22 +3690,17 @@ export default function App() {
     }
   };
 
-  const uniqueById = (arr) => {
-    const m = new Map();
-    for (const n of Array.isArray(arr) ? arr : []) {
-      if (!n) continue;
-      m.set(String(n.id), n);
-    }
-    return Array.from(m.values());
-  };
-  const persistNotesCache = (notes) => {
+  // Clean up old localStorage cache on startup (migrated to IndexedDB)
+  const clearLegacyLocalStorageCache = () => {
     try {
-      localStorage.setItem(NOTES_CACHE_KEY, JSON.stringify(Array.isArray(notes) ? notes : []));
-      localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+      localStorage.removeItem(NOTES_CACHE_KEY);
+      localStorage.removeItem(ARCHIVED_NOTES_CACHE_KEY);
+      localStorage.removeItem(TRASH_NOTES_CACHE_KEY);
+      localStorage.removeItem(CACHE_TIMESTAMP_KEY);
     } catch (e) {
-      console.error('Error caching notes:', e);
     }
   };
+
   // Consistent ordering: pinned first, then by position (server-persisted DnD),
   // fallback to updated_at/timestamp when position is missing
   const sortNotesByRecency = (arr) => {
@@ -3720,24 +3759,28 @@ export default function App() {
     const reqId = ++loadNotesReqId.current;
     setNotesLoading(true);
 
+    // Load from IndexedDB first for instant render
+    try {
+      const cached = await getAllNotesFromDb();
+      if (cached.length > 0 && reqId === loadNotesReqId.current) {
+        setNotes(sortNotesByRecency(cached));
+      }
+    } catch (e) {
+      // silent
+    }
+
     try {
       const data = await api("/notes", { token });
       if (reqId !== loadNotesReqId.current) return;
       const notesArray = Array.isArray(data) ? data : [];
       setNotes(sortNotesByRecency(notesArray));
-      persistNotesCache(notesArray);
+      // Persist to IndexedDB
+      await saveNotesToDb(notesArray);
     } catch (error) {
       if (reqId !== loadNotesReqId.current) return;
-      // Try to load from cache as fallback
-      try {
-        const cachedData = localStorage.getItem(NOTES_CACHE_KEY);
-        if (cachedData) {
-          const cachedNotes = JSON.parse(cachedData);
-          setNotes(sortNotesByRecency(cachedNotes));
-        } else {
-          setNotes([]);
-        }
-      } catch (cacheError) {
+      // If IndexedDB had nothing, keep empty
+      const cachedFromDb = await getAllNotesFromDb().catch(() => []);
+      if (cachedFromDb.length === 0) {
         setNotes([]);
       }
     } finally {
@@ -3754,16 +3797,15 @@ export default function App() {
     setNotesLoading(true);
 
     let hasCachedData = false;
+
     try {
-      const cachedData = localStorage.getItem(ARCHIVED_NOTES_CACHE_KEY);
-      if (cachedData) {
-        const cachedNotes = JSON.parse(cachedData);
-        if (reqId === loadNotesReqId.current) {
-          setNotes(sortNotesByRecency(cachedNotes));
-        }
+      const cached = await getAllNotesFromDb();
+      const archivedOnly = cached.filter((n) => n.archived);
+      if (archivedOnly.length > 0 && reqId === loadNotesReqId.current) {
+        setNotes(sortNotesByRecency(archivedOnly));
         hasCachedData = true;
       }
-    } catch (cacheError) {
+    } catch (e) {
     }
 
     try {
@@ -3771,12 +3813,10 @@ export default function App() {
       if (reqId !== loadNotesReqId.current) return;
       const notesArray = Array.isArray(data) ? data : [];
       setNotes(sortNotesByRecency(notesArray));
-
-      try {
-        localStorage.setItem(ARCHIVED_NOTES_CACHE_KEY, JSON.stringify(notesArray));
-        localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-      } catch (error) {
-      }
+      // Merge into IndexedDB (archived are a subset)
+      const existing = await getAllNotesFromDb().catch(() => []);
+      const merged = existing.filter((n) => !notesArray.some((m) => m.id === n.id));
+      await saveNotesToDb([...merged, ...notesArray]);
     } catch (error) {
       if (reqId !== loadNotesReqId.current) return;
       if (!hasCachedData) {
@@ -3794,16 +3834,15 @@ export default function App() {
     setNotesLoading(true);
 
     let hasCachedData = false;
+
     try {
-      const cachedData = localStorage.getItem(TRASH_NOTES_CACHE_KEY);
-      if (cachedData) {
-        const cachedNotes = JSON.parse(cachedData);
-        if (reqId === loadNotesReqId.current) {
-          setNotes(sortNotesByRecency(cachedNotes));
-        }
+      const cached = await getAllNotesFromDb();
+      const trashed = cached.filter((n) => n.deleted);
+      if (trashed.length > 0 && reqId === loadNotesReqId.current) {
+        setNotes(sortNotesByRecency(trashed));
         hasCachedData = true;
       }
-    } catch (cacheError) {
+    } catch (e) {
     }
 
     try {
@@ -3811,12 +3850,9 @@ export default function App() {
       if (reqId !== loadNotesReqId.current) return;
       const notesArray = Array.isArray(data) ? data : [];
       setNotes(sortNotesByRecency(notesArray));
-
-      try {
-        localStorage.setItem(TRASH_NOTES_CACHE_KEY, JSON.stringify(notesArray));
-        localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-      } catch (error) {
-      }
+      const existing = await getAllNotesFromDb().catch(() => []);
+      const merged = existing.filter((n) => !notesArray.some((m) => m.id === n.id));
+      await saveNotesToDb([...merged, ...notesArray]);
     } catch (error) {
       if (reqId !== loadNotesReqId.current) return;
       if (!hasCachedData) {
@@ -3829,6 +3865,8 @@ export default function App() {
 
   useEffect(() => {
     if (!token) return;
+    refreshPendingCount();
+    clearLegacyLocalStorageCache();
 
     // Load appropriate notes based on tag filter
     if (tagFilter === 'ARCHIVED') {
@@ -3978,6 +4016,14 @@ export default function App() {
     // Handle page visibility changes (PWA background/foreground)
     const handleVisibilityChange = async () => {
       if (document.visibilityState === 'visible') {
+        // Process pending operations when returning to the app
+        processPendingOps(api, token).then(result => {
+          if (result.synced > 0) {
+            showToast(`Synced ${result.synced} change(s)`, 'success');
+          }
+          refreshPendingCount();
+        }).catch(() => {});
+
         // Page became visible, validate token first
         try {
           // Quick health check - this will fail with 401 if token is expired
@@ -4019,6 +4065,21 @@ export default function App() {
     const handleOnline = () => {
       console.log("App went online");
       setIsOnline(true);
+      // Process any pending offline operations
+      processPendingOps(api, token).then(result => {
+        if (result.synced > 0) {
+          showToast(`Synced ${result.synced} change(s)`, "success");
+          // Refresh notes after sync
+          if (tagFilter === 'ARCHIVED') {
+            loadArchivedNotes().catch(() => {});
+          } else if (tagFilter === TRASH) {
+            loadTrashNotes().catch(() => {});
+          } else {
+            loadNotes().catch(() => {});
+          }
+        }
+        refreshPendingCount();
+      }).catch(() => {});
     };
 
     const handleOffline = () => {
@@ -4240,7 +4301,7 @@ export default function App() {
     setAuth(null);
     setSession(null);
     setNotes([]);
-    // Clear all cached data for this user
+    // Clear all cached data
     try {
       const keys = Object.keys(localStorage);
       keys.forEach(key => {
@@ -4251,6 +4312,8 @@ export default function App() {
     } catch (error) {
       console.error("Error clearing cache on sign out:", error);
     }
+    clearAllNotesFromDb().catch(() => {});
+    clearPendingOps().catch(() => {});
     navigate("#/login");
   };
   const signIn = async (email, password) => {
@@ -4312,6 +4375,20 @@ export default function App() {
     setClInput("");
   };
 
+  const resetComposer = () => {
+    setTitle("");
+    setContent("");
+    setTags("");
+    setComposerImages([]);
+    setComposerColor("default");
+    setClItems([]);
+    setClInput("");
+    setComposerDrawingData({ paths: [], dimensions: null });
+    setComposerType("text");
+    setComposerCollapsed(true);
+    if (contentRef.current) contentRef.current.style.height = "auto";
+  };
+
   const addNote = async () => {
     const isText = composerType === "text";
     const isChecklist = composerType === "checklist";
@@ -4346,22 +4423,25 @@ export default function App() {
       const created = await api("/notes", { method: "POST", body: newNote, token });
       setNotes((prev) => sortNotesByRecency([created, ...(Array.isArray(prev) ? prev : [])]));
       invalidateNotesCache();
-
-      // Reset composer after successful add
-      setTitle("");
-      setContent("");
-      setTags("");
-      setComposerImages([]);
-      setComposerColor("default");
-      setClItems([]);
-      setClInput("");
-      setComposerDrawingData({ paths: [], dimensions: null });
-      setComposerType("text");
-      setComposerCollapsed(true);
-      if (contentRef.current) contentRef.current.style.height = "auto";
+      await saveNoteToDb(created);
     } catch (e) {
+      if (e.isNetworkError) {
+        // Save locally + queue
+        const localNote = { ...newNote, _localOnly: true, _offline: true };
+        await saveNoteToDb(localNote);
+        await addPendingOp({ type: 'create', noteId: newNote.id, note: newNote, timestamp: Date.now() });
+        setNotes((prev) => sortNotesByRecency([localNote, ...(Array.isArray(prev) ? prev : [])]));
+        resetComposer();
+        refreshPendingCount();
+        showToast("Note saved offline. Will sync when online.", "info");
+        return;
+      }
       alert(e.message || "Failed to add note");
+      return;
     }
+
+    // Reset composer after successful add
+    resetComposer();
   };
 
   /** -------- Download single note .md -------- */
@@ -4376,14 +4456,11 @@ export default function App() {
     try {
       await api(`/notes/${noteId}/archive`, { method: "POST", token, body: { archived } });
 
-      // Invalidate both caches since archiving affects both regular and archived notes
       invalidateNotesCache();
       invalidateArchivedNotesCache();
 
-      // Reload appropriate notes based on current view
       if (tagFilter === 'ARCHIVED') {
         if (!archived) {
-          // If unarchiving from archived view, switch back to regular view
           setTagFilter(null);
           await loadNotes();
         } else {
@@ -4397,6 +4474,13 @@ export default function App() {
         closeModal();
       }
     } catch (e) {
+      if (e.isNetworkError) {
+        await addPendingOp({ type: 'archive', noteId, archived, timestamp: Date.now() });
+        refreshPendingCount();
+        closeModal();
+        showToast("Archive will sync when online", "info");
+        return;
+      }
       alert(e.message || "Failed to archive note");
     }
   };
@@ -5186,17 +5270,30 @@ export default function App() {
       prevDrawingRef.current = mType === "draw" ? (mDrawingData || { paths: [], dimensions: null }) : { paths: [], dimensions: null };
       // Also update updated_at locally so the Edited stamp updates immediately
       const nowIso = new Date().toISOString();
-      setNotes((prev) => prev.map((n) =>
-      (String(n.id) === String(activeId) ? {
-        ...n,
+      const updatedNote = {
         ...payload,
         updated_at: nowIso,
         lastEditedBy: currentUser?.email || currentUser?.name,
         lastEditedAt: nowIso
-      } : n)
+      };
+      setNotes((prev) => prev.map((n) =>
+      (String(n.id) === String(activeId) ? updatedNote : n)
       ));
+      await saveNoteToDb(updatedNote);
       closeModal();
     } catch (e) {
+      if (e.isNetworkError) {
+        const offlinePayload = { ...payload, _offline: true };
+        setNotes((prev) => prev.map((n) =>
+        (String(n.id) === String(activeId) ? { ...n, ...offlinePayload } : n)
+        ));
+        await saveNoteToDb({ ...payload, _offline: true });
+        await addPendingOp({ type: 'update', noteId: activeId, note: payload, timestamp: Date.now() });
+        refreshPendingCount();
+        showToast("Saved offline. Will sync when online.", "info");
+        closeModal();
+        return;
+      }
       alert(e.message || "Failed to save note");
     } finally {
       setSavingModal(false);
@@ -5217,11 +5314,21 @@ export default function App() {
         await api(`/notes/${activeId}`, { method: "DELETE", token });
       }
       invalidateNotesCache();
+      await removeNoteFromDb(activeId);
 
       setNotes((prev) => prev.filter((n) => String(n.id) !== String(activeId)));
       closeModal();
       showToast("Note deleted" + (permanent || tagFilter === TRASH ? " permanently" : ""), "success");
     } catch (e) {
+      if (e.isNetworkError) {
+        await addPendingOp({ type: 'delete', noteId: activeId, note: null, timestamp: Date.now() });
+        setNotes((prev) => prev.filter((n) => String(n.id) !== String(activeId)));
+        await removeNoteFromDb(activeId);
+        refreshPendingCount();
+        closeModal();
+        showToast("Delete will sync when online", "info");
+        return;
+      }
       if (e.status === 404 || e.message?.includes("not found")) {
         showToast("You can't delete this note as you don't own it", "error");
       } else {
@@ -5273,9 +5380,14 @@ export default function App() {
     try {
       await api(`/notes/${id}`, { method: "PATCH", token, body: { pinned: !!toPinned } });
       invalidateNotesCache();
-
       setNotes((prev) => prev.map((n) => (String(n.id) === String(id) ? { ...n, pinned: !!toPinned } : n)));
     } catch (e) {
+      if (e.isNetworkError) {
+        setNotes((prev) => prev.map((n) => (String(n.id) === String(id) ? { ...n, pinned: !!toPinned } : n)));
+        await addPendingOp({ type: 'patch', noteId: id, body: { pinned: !!toPinned }, timestamp: Date.now() });
+        refreshPendingCount();
+        return;
+      }
       alert(e.message || "Failed to toggle pin");
     }
   };
@@ -6827,6 +6939,7 @@ export default function App() {
         // SSE connection status
         sseConnected={sseConnected}
         isOnline={isOnline}
+        pendingCount={pendingCount}
         loadNotes={loadNotes}
         loadArchivedNotes={loadArchivedNotes}
         // checklist update

@@ -9,7 +9,10 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
+      strategies: "injectManifest",
       registerType: "autoUpdate",
+      srcDir: "src",
+      filename: "sw.js",
       includeAssets: [
         "favicon.ico",
         "favicon-16x16.png",
@@ -28,7 +31,7 @@ export default defineConfig({
         background_color: "#ffffff",
         display: "standalone",
         scope: "/",
-        start_url: "/",
+        start_url: "/index.html",
         orientation: "portrait-primary",
         icons: [
           { src: "/pwa-192.png", sizes: "192x192", type: "image/png" },
@@ -37,42 +40,8 @@ export default defineConfig({
         ]
       },
       workbox: {
-        navigateFallback: "/index.html",
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,webp}"],
-        runtimeCaching: [
-          {
-            urlPattern: /^https?:\/\/.*\/api\/notes.*$/,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'notes-cache',
-              networkTimeoutSeconds: 3,
-              cacheableResponse: {
-                statuses: [0, 200]
-              },
-              expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 24 * 60 * 60 // 24 hours
-              }
-            }
-          },
-          {
-            urlPattern: /^https?:\/\/.*\/api\/.*$/,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-cache',
-              networkTimeoutSeconds: 3,
-              cacheableResponse: {
-                statuses: [0, 200]
-              },
-              expiration: {
-                maxEntries: 50,
-                maxAgeSeconds: 60 * 60 // 1 hour
-              }
-            }
-          }
-        ]
+        globPatterns: ["**/*.{js,css,html,ico,png,svg,webp}"]
       }
-      // devOptions: { enabled: true } // ← uncomment to test SW in dev (remember to disable later)
     })
   ],
   server: {
