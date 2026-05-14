@@ -4264,6 +4264,9 @@ export default function App() {
     try {
       const settings = await api("/admin/settings", { method: "PATCH", token, body: newSettings });
       setAdminSettings(settings);
+      if (typeof newSettings.allowNewAccounts === 'boolean') {
+        setAllowRegistration(newSettings.allowNewAccounts);
+      }
     } catch (e) {
       alert(e.message || "Failed to update admin settings");
     }
@@ -6418,6 +6421,10 @@ export default function App() {
 
   if (!currentUser?.email) {
     if (route === "#/register") {
+      if (!allowRegistration) {
+        navigate("#/login", { replace: true });
+        return null;
+      }
       return (
         <RegisterView
           dark={dark}

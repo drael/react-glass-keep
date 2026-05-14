@@ -1,5 +1,5 @@
 # --- Build stage
-FROM node:18-slim AS builder
+FROM node:20-slim AS builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y python3 make g++ 
 
@@ -18,7 +18,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # --- Runtime
-FROM node:18-slim
+FROM node:20-slim
 WORKDIR /app
 ENV NODE_ENV=production
 

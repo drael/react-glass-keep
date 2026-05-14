@@ -1066,10 +1066,14 @@ const setAdminSettings = db.prepare(
   "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)"
 );
 
-// Seed default
-const existingSetting = getAdminSettings.get();
-if (!existingSetting) {
+// Seed default — env var always takes effect on startup if set
+if (process.env.ALLOW_REGISTRATION !== undefined) {
   setAdminSettings.run("allowNewAccounts", process.env.ALLOW_REGISTRATION === "true" ? "true" : "false");
+} else {
+  const existingSetting = getAdminSettings.get();
+  if (!existingSetting) {
+    setAdminSettings.run("allowNewAccounts", "true");
+  }
 }
 
 function readAdminSettings() {
