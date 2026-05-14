@@ -1,7 +1,7 @@
 services:
   app:
-    build: .
-    container_name: glass-keep-fixed
+    image: ghcr.io/drael/react-glass-keep:latest
+    container_name: glass-keep
     restart: unless-stopped
     environment:
       NODE_ENV: production

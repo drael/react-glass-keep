@@ -23,6 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 
+docker-compose-dev.yaml
+
 # SQLite databases (server)
 server/*.sqlite
 server/*.sqlite-wal
