@@ -176,6 +176,7 @@ const modalBgFor = (colorKey, dark, noGlass) => {
 
 /** ---------- Special tag filters ---------- */
 const ALL_IMAGES = "__ALL_IMAGES__";
+const TRASH = "__TRASH__";
 
 /** ---------- Icons ---------- */
 const PinOutline = () => (
@@ -347,6 +348,28 @@ const LogOutIcon = () => (
 const ArchiveIcon = () => (
   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
     <path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+  </svg>
+);
+
+// Notes list icon (monochrome)
+const NotesIcon = () => (
+  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+  </svg>
+);
+
+// Trash icon (monochrome)
+const TrashIcon = () => (
+  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+  </svg>
+);
+
+// Tag icon (monochrome)
+const TagIcon = () => (
+  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2z" />
+    <circle cx="7" cy="7" r="2" />
   </svg>
 );
 
@@ -1523,6 +1546,7 @@ function SecretLoginView({ dark, onToggleDark, onLoginWithKey, goLogin }) {
 function TagSidebar({ open, onClose, tagsWithCounts, activeTag, onSelect, dark, permanent = false, width = 288, onResize }) {
   const isAllNotes = activeTag === null;
   const isAllImages = activeTag === ALL_IMAGES;
+  const isTrash = activeTag === TRASH;
 
   return (
     <>
@@ -1556,26 +1580,34 @@ function TagSidebar({ open, onClose, tagsWithCounts, activeTag, onSelect, dark, 
         <nav className="p-2 overflow-y-auto h-[calc(100%-56px)]">
           {/* Notes (All) */}
           <button
-            className={`w-full text-left px-3 py-2 rounded-md mb-1 ${isAllNotes ? (dark ? "bg-white/10" : "bg-black/5") : (dark ? "hover:bg-white/10" : "hover:bg-black/5")}`}
+            className={`w-full text-left px-3 py-2 rounded-md mb-1 flex items-center gap-2 ${isAllNotes ? (dark ? "bg-white/10" : "bg-black/5") : (dark ? "hover:bg-white/10" : "hover:bg-black/5")}`}
             onClick={() => { onSelect(null); onClose(); }}
           >
-            Notes (All)
+            <NotesIcon /> Notes (All)
           </button>
 
           {/* All Images */}
           <button
-            className={`w-full text-left px-3 py-2 rounded-md mb-2 ${isAllImages ? (dark ? "bg-white/10" : "bg-black/5") : (dark ? "hover:bg-white/10" : "hover:bg-black/5")}`}
+            className={`w-full text-left px-3 py-2 rounded-md mb-1 flex items-center gap-2 ${isAllImages ? (dark ? "bg-white/10" : "bg-black/5") : (dark ? "hover:bg-white/10" : "hover:bg-black/5")}`}
             onClick={() => { onSelect(ALL_IMAGES); onClose(); }}
           >
-            All Images
+            <ImageIcon /> All Images
           </button>
 
           {/* Archived Notes */}
           <button
-            className={`w-full text-left px-3 py-2 rounded-md mb-2 ${activeTag === 'ARCHIVED' ? (dark ? "bg-white/10" : "bg-black/5") : (dark ? "hover:bg-white/10" : "hover:bg-black/5")}`}
+            className={`w-full text-left px-3 py-2 rounded-md mb-1 flex items-center gap-2 ${activeTag === 'ARCHIVED' ? (dark ? "bg-white/10" : "bg-black/5") : (dark ? "hover:bg-white/10" : "hover:bg-black/5")}`}
             onClick={() => { onSelect('ARCHIVED'); onClose(); }}
           >
-            Archived Notes
+            <ArchiveIcon /> Archived Notes
+          </button>
+
+          {/* Trash */}
+          <button
+            className={`w-full text-left px-3 py-2 rounded-md mb-2 flex items-center gap-2 ${activeTag === TRASH ? (dark ? "bg-white/10" : "bg-black/5") : (dark ? "hover:bg-white/10" : "hover:bg-black/5")}`}
+            onClick={() => { onSelect(TRASH); onClose(); }}
+          >
+            <TrashIcon /> Trash
           </button>
 
           {/* User tags */}
@@ -1589,6 +1621,7 @@ function TagSidebar({ open, onClose, tagsWithCounts, activeTag, onSelect, dark, 
                 onClick={() => { onSelect(tag); onClose(); }}
                 title={tag}
               >
+                <TagIcon />
                 <span className="truncate">{tag}</span>
                 <span className="text-xs opacity-70">{count}</span>
               </button>
@@ -2182,6 +2215,7 @@ function NotesUI({
   // AI props
   localAiEnabled, aiResponse, setAiResponse, isAiLoading, aiLoadingProgress, onAiSearch,
   disableTransparency,
+  emptyTrash,
 }) {
   // Multi-select color popover (local UI state)
   const multiColorBtnRef = useRef(null);
@@ -2189,7 +2223,8 @@ function NotesUI({
   const tagLabel =
     activeTagFilter === ALL_IMAGES ? "All Images" :
       activeTagFilter === 'ARCHIVED' ? "Archived Notes" :
-        activeTagFilter;
+        activeTagFilter === TRASH ? "Trash" :
+          activeTagFilter;
 
   // Close header menu when scrolling
   React.useEffect(() => {
@@ -2249,16 +2284,18 @@ function NotesUI({
                 </div>
               </div>
             </Popover>
-            {activeTagFilter !== 'ARCHIVED' && (
+            {activeTagFilter !== 'ARCHIVED' && activeTagFilter !== TRASH && (
               <button className="px-3 py-1.5 rounded-lg border border-[var(--border-light)] hover:bg-black/5 dark:hover:bg-white/10 text-sm flex items-center gap-1" onClick={() => onBulkPin(true)}>
                 <PinIcon />
                 Pin
               </button>
             )}
-            <button className="px-3 py-1.5 rounded-lg border border-[var(--border-light)] hover:bg-black/5 dark:hover:bg-white/10 text-sm flex items-center gap-1" onClick={onBulkArchive}>
-              <ArchiveIcon />
-              {activeTagFilter === 'ARCHIVED' ? 'Unarchive' : 'Archive'}
-            </button>
+            {activeTagFilter !== TRASH && (
+              <button className="px-3 py-1.5 rounded-lg border border-[var(--border-light)] hover:bg-black/5 dark:hover:bg-white/10 text-sm flex items-center gap-1" onClick={onBulkArchive}>
+                <ArchiveIcon />
+                {activeTagFilter === 'ARCHIVED' ? 'Unarchive' : 'Archive'}
+              </button>
+            )}
             <span className="text-xs opacity-70 ml-2">Selected: {selectedIds.length}</span>
           </div>
           <button
@@ -2298,8 +2335,17 @@ function NotesUI({
           <h1 className="hidden sm:block text-2xl sm:text-3xl font-bold">Glass Keep</h1>
           {activeTagFilter && (
             <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-indigo-600/10 text-indigo-700 dark:text-indigo-300 border border-indigo-600/20">
-              {tagLabel === "All Images" || tagLabel === "Archived Notes" ? tagLabel : `Tag: ${tagLabel}`}
+              {tagLabel === "All Images" || tagLabel === "Archived Notes" || tagLabel === "Trash" ? tagLabel : `Tag: ${tagLabel}`}
             </span>
+          )}
+          {activeTagFilter === TRASH && (
+            <button
+              onClick={emptyTrash}
+              className="ml-2 text-xs px-2 py-0.5 rounded-full bg-red-600/10 text-red-700 dark:text-red-300 border border-red-600/20 hover:bg-red-600/20"
+              title="Empty Trash"
+            >
+              Empty Trash
+            </button>
           )}
 
           {/* Offline indicator */}
@@ -2512,7 +2558,8 @@ function NotesUI({
         </div>
       )}
 
-      {/* Composer */}
+      {/* Composer - hidden in trash view */}
+      {activeTagFilter !== TRASH && (
       <div className="px-4 sm:px-6 md:px-8 lg:px-12">
         <div className="max-w-2xl mx-auto">
           {!isOnline ? (
@@ -2714,8 +2761,10 @@ function NotesUI({
                           borderColor: composerColor === "default" ? "#d1d5db" : solid(bgFor(composerColor, dark, disableTransparency)),
                         }}
                       >
-                        {composerColor === "default" && (
+                        {composerColor === "default" ? (
                           <div className="w-4 h-4 rounded-full" style={{ backgroundColor: dark ? "#1f2937" : "#fff" }} />
+                        ) : (
+                          <div className="w-3 h-3 rounded-full ring-2 ring-inset ring-white/60 dark:ring-black/40" />
                         )}
                       </button>
                       <Popover
@@ -2788,7 +2837,8 @@ function NotesUI({
             </div>
           )}
         </div>
-      </div >
+      </div>
+      )}
 
       {/* Notes lists */}
       < main className="px-4 sm:px-6 md:px-8 lg:px-12 pb-12" >
@@ -3284,16 +3334,18 @@ export default function App() {
 
   const onBulkDelete = async () => {
     if (!selectedIds.length) return;
+    const isTrash = tagFilter === TRASH;
     showGenericConfirm({
-      title: "Delete Notes",
-      message: `Delete ${selectedIds.length} selected note(s)? This cannot be undone.`,
-      confirmText: "Delete",
+      title: isTrash ? "Permanently Delete Notes" : "Delete Notes",
+      message: isTrash
+        ? `Permanently delete ${selectedIds.length} selected note(s)? This cannot be undone.`
+        : `Delete ${selectedIds.length} selected note(s)? They will be moved to trash.`,
+      confirmText: isTrash ? "Permanently Delete" : "Delete",
       danger: true,
       onConfirm: async () => {
         try {
-          // Fire deletes sequentially to keep API simple
           for (const id of selectedIds) {
-            await api(`/notes/${id}`, { method: "DELETE", token });
+            await api(isTrash ? `/notes/${id}/permanent` : `/notes/${id}`, { method: isTrash ? "DELETE" : "DELETE", token });
           }
           setNotes((prev) => prev.filter((n) => !selectedIds.includes(String(n.id))));
           onExitMulti();
@@ -3563,6 +3615,7 @@ export default function App() {
   // Cache keys for localStorage
   const NOTES_CACHE_KEY = `glass-keep-notes-${currentUser?.id || 'anonymous'}`;
   const ARCHIVED_NOTES_CACHE_KEY = `glass-keep-archived-${currentUser?.id || 'anonymous'}`;
+  const TRASH_NOTES_CACHE_KEY = `glass-keep-trash-${currentUser?.id || 'anonymous'}`;
   const CACHE_TIMESTAMP_KEY = `glass-keep-cache-timestamp-${currentUser?.id || 'anonymous'}`;
 
   // Cache invalidation functions
@@ -3581,6 +3634,15 @@ export default function App() {
       localStorage.removeItem(CACHE_TIMESTAMP_KEY);
     } catch (error) {
       console.error("Error invalidating archived notes cache:", error);
+    }
+  };
+
+  const invalidateTrashCache = () => {
+    try {
+      localStorage.removeItem(TRASH_NOTES_CACHE_KEY);
+      localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+    } catch (error) {
+      console.error("Error invalidating trash cache:", error);
     }
   };
 
@@ -3724,16 +3786,58 @@ export default function App() {
       setNotesLoading(false);
     }
   };
+
+  // Load trashed notes
+  const loadTrashNotes = async () => {
+    if (!token) return;
+    const reqId = ++loadNotesReqId.current;
+    setNotesLoading(true);
+
+    let hasCachedData = false;
+    try {
+      const cachedData = localStorage.getItem(TRASH_NOTES_CACHE_KEY);
+      if (cachedData) {
+        const cachedNotes = JSON.parse(cachedData);
+        if (reqId === loadNotesReqId.current) {
+          setNotes(sortNotesByRecency(cachedNotes));
+        }
+        hasCachedData = true;
+      }
+    } catch (cacheError) {
+    }
+
+    try {
+      const data = await api("/notes/trash", { token });
+      if (reqId !== loadNotesReqId.current) return;
+      const notesArray = Array.isArray(data) ? data : [];
+      setNotes(sortNotesByRecency(notesArray));
+
+      try {
+        localStorage.setItem(TRASH_NOTES_CACHE_KEY, JSON.stringify(notesArray));
+        localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+      } catch (error) {
+      }
+    } catch (error) {
+      if (reqId !== loadNotesReqId.current) return;
+      if (!hasCachedData) {
+        setNotes([]);
+      }
+    } finally {
+      setNotesLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!token) return;
 
-    console.log("Tag filter changed to:", tagFilter, "from previous value");
-
     // Load appropriate notes based on tag filter
     if (tagFilter === 'ARCHIVED') {
-      console.log("Loading archived notes...");
       loadArchivedNotes().catch((error) => {
         console.error("Failed to load archived notes:", error);
+      });
+    } else if (tagFilter === TRASH) {
+      loadTrashNotes().catch((error) => {
+        console.error("Failed to load trashed notes:", error);
       });
     } else {
       console.log("Loading regular notes...");
@@ -5098,22 +5202,25 @@ export default function App() {
       setSavingModal(false);
     }
   };
-  const deleteModal = async () => {
+  const deleteModal = async (permanent) => {
     if (activeId == null) return;
     try {
-      // Check if user owns the note
       const note = notes.find(n => String(n.id) === String(activeId));
       if (note && note.user_id !== currentUser?.id) {
         showToast("You can't delete this note as you don't own it", "error");
         return;
       }
 
-      await api(`/notes/${activeId}`, { method: "DELETE", token });
+      if (permanent || tagFilter === TRASH) {
+        await api(`/notes/${activeId}/permanent`, { method: "DELETE", token });
+      } else {
+        await api(`/notes/${activeId}`, { method: "DELETE", token });
+      }
       invalidateNotesCache();
 
       setNotes((prev) => prev.filter((n) => String(n.id) !== String(activeId)));
       closeModal();
-      showToast("Note deleted successfully", "success");
+      showToast("Note deleted" + (permanent || tagFilter === TRASH ? " permanently" : ""), "success");
     } catch (e) {
       if (e.status === 404 || e.message?.includes("not found")) {
         showToast("You can't delete this note as you don't own it", "error");
@@ -5121,6 +5228,46 @@ export default function App() {
         showToast(e.message || "Delete failed", "error");
       }
     }
+  };
+
+  const restoreModal = async () => {
+    if (activeId == null) return;
+    try {
+      const note = notes.find(n => String(n.id) === String(activeId));
+      if (note && note.user_id !== currentUser?.id) {
+        showToast("You can't restore this note as you don't own it", "error");
+        return;
+      }
+
+      await api(`/notes/${activeId}/restore`, { method: "POST", token });
+      invalidateTrashCache();
+      invalidateNotesCache();
+
+      setNotes((prev) => prev.filter((n) => String(n.id) !== String(activeId)));
+      closeModal();
+      showToast("Note restored", "success");
+    } catch (e) {
+      showToast(e.message || "Restore failed", "error");
+    }
+  };
+
+  const emptyTrash = async () => {
+    showGenericConfirm({
+      title: "Empty Trash",
+      message: "Permanently delete all notes in trash? This cannot be undone.",
+      confirmText: "Empty Trash",
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await api("/notes/trash", { method: "DELETE", token });
+          invalidateTrashCache();
+          loadTrashNotes();
+          showToast("Trash emptied", "success");
+        } catch (e) {
+          showToast(e.message || "Failed to empty trash", "error");
+        }
+      }
+    });
   };
   const togglePin = async (id, toPinned) => {
     try {
@@ -5277,13 +5424,13 @@ export default function App() {
   /** -------- Derived lists (search + tag filter) -------- */
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    const tag = tagFilter === ALL_IMAGES ? null : (tagFilter === 'ARCHIVED' ? null : (tagFilter?.toLowerCase() || null));
+    const tag = tagFilter === ALL_IMAGES || tagFilter === 'ARCHIVED' || tagFilter === TRASH ? null : (tagFilter?.toLowerCase() || null);
 
     return notes.filter((n) => {
       if (tagFilter === ALL_IMAGES) {
         if (!(n.images && n.images.length)) return false;
-      } else if (tagFilter === 'ARCHIVED') {
-        // In archived view, show all notes (they're already filtered by the backend)
+      } else if (tagFilter === 'ARCHIVED' || tagFilter === TRASH) {
+        // In archived/trash view, show all notes (they're already filtered by the backend)
         // Just apply search filter
       } else if (tag && !(n.tags || []).some((t) => String(t).toLowerCase() === tag)) {
         return false;
@@ -5299,7 +5446,7 @@ export default function App() {
   }, [notes, search, tagFilter]);
   const pinned = filtered.filter((n) => n.pinned);
   const others = filtered.filter((n) => !n.pinned);
-  const filteredEmptyWithSearch = filtered.length === 0 && notes.length > 0 && !!(search || (tagFilter && tagFilter !== 'ARCHIVED'));
+  const filteredEmptyWithSearch = filtered.length === 0 && notes.length > 0 && !!(search || (tagFilter && tagFilter !== 'ARCHIVED' && tagFilter !== TRASH));
   const allEmpty = notes.length === 0;
 
   /** -------- Modal link handler: open links in new tab (no auto-enter edit) -------- */
@@ -5517,12 +5664,12 @@ export default function App() {
             >
               <div className="flex flex-wrap items-center gap-2">
                 <input
-                  className={`flex-[1_0_50%] min-w-[240px] shrink-0 bg-transparent text-2xl font-bold placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none pr-2 ${!isOnline ? 'opacity-50 cursor-not-allowed' : ''
+                  className={`flex-[1_0_50%] min-w-[240px] shrink-0 bg-transparent text-2xl font-bold placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none pr-2 ${!isOnline || tagFilter === TRASH ? 'opacity-50 cursor-not-allowed' : ''
                     }`}
                   value={mTitle}
-                  onChange={(e) => { if (isOnline) setMTitle(e.target.value) }}
+                  onChange={(e) => { if (isOnline && tagFilter !== TRASH) setMTitle(e.target.value) }}
                   placeholder="Title"
-                  disabled={!isOnline}
+                  disabled={!isOnline || tagFilter === TRASH}
                 />
                 <div className="flex items-center gap-2 flex-none ml-auto">
                   {/* Collaboration button - always visible */}
@@ -5545,8 +5692,8 @@ export default function App() {
                   </button>
 
 
-                  {/* View/Edit toggle only for TEXT notes - hidden when offline */}
-                  {isOnline && mType === "text" && (
+                  {/* View/Edit toggle only for TEXT notes - hidden when offline or in trash */}
+                  {isOnline && mType === "text" && tagFilter !== TRASH && (
                     <button
                       className="px-3 py-1.5 rounded-lg border border-[var(--border-light)] hover:bg-black/5 dark:hover:bg-white/10 text-sm"
                       onClick={() => { setViewMode((v) => !v); setShowModalFmt(false); }}
@@ -5556,7 +5703,7 @@ export default function App() {
                     </button>
                   )}
 
-                  {isOnline && mType === "text" && !viewMode && (
+                  {isOnline && mType === "text" && !viewMode && tagFilter !== TRASH && (
                     <>
                       <button
                         ref={modalFmtBtnRef}
@@ -5607,33 +5754,54 @@ export default function App() {
                             <DownloadIcon />
                             Download .md
                           </button>
-                          <button
-                            className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm ${dark ? "hover:bg-white/10" : "hover:bg-gray-100"}`}
-                            onClick={() => {
-                              const note = notes.find(nn => String(nn.id) === String(activeId));
-                              if (note) {
-                                handleArchiveNote(activeId, !note.archived);
-                                setModalMenuOpen(false);
-                              }
-                            }}
-                          >
-                            <ArchiveIcon />
-                            {activeNoteObj?.archived ? "Unarchive" : "Archive"}
-                          </button>
-                          <button
-                            className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm text-red-600 ${dark ? "hover:bg-white/10" : "hover:bg-gray-100"}`}
-                            onClick={() => { setConfirmDeleteOpen(true); setModalMenuOpen(false); }}
-                          >
-                            <Trash />
-                            Delete
-                          </button>
+                          {tagFilter === TRASH ? (
+                            <>
+                              <button
+                                className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm ${dark ? "hover:bg-white/10" : "hover:bg-gray-100"}`}
+                                onClick={() => { restoreModal(); setModalMenuOpen(false); }}
+                              >
+                                <ArchiveIcon />
+                                Restore
+                              </button>
+                              <button
+                                className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm text-red-600 ${dark ? "hover:bg-white/10" : "hover:bg-gray-100"}`}
+                                onClick={() => { setConfirmDeleteOpen(true); setModalMenuOpen(false); }}
+                              >
+                                <Trash />
+                                Permanently Delete
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm ${dark ? "hover:bg-white/10" : "hover:bg-gray-100"}`}
+                                onClick={() => {
+                                  const note = notes.find(nn => String(nn.id) === String(activeId));
+                                  if (note) {
+                                    handleArchiveNote(activeId, !note.archived);
+                                    setModalMenuOpen(false);
+                                  }
+                                }}
+                              >
+                                <ArchiveIcon />
+                                {activeNoteObj?.archived ? "Unarchive" : "Archive"}
+                              </button>
+                              <button
+                                className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm text-red-600 ${dark ? "hover:bg-white/10" : "hover:bg-gray-100"}`}
+                                onClick={() => { setConfirmDeleteOpen(true); setModalMenuOpen(false); }}
+                              >
+                                <Trash />
+                                Delete
+                              </button>
+                            </>
+                          )}
                         </div>
                       </Popover>
                     </>
                   )}
 
-                  {/* Pin button - hidden when offline or in archived view */}
-                  {isOnline && tagFilter !== 'ARCHIVED' && (
+                  {/* Pin button - hidden when offline or in archived/trash view */}
+                  {isOnline && tagFilter !== 'ARCHIVED' && tagFilter !== TRASH && (
                     <button
                       className="rounded-full p-2 opacity-70 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       title="Pin/unpin"
@@ -5693,13 +5861,13 @@ export default function App() {
                   <div className="relative min-h-[160px]">
                     <textarea
                       ref={mBodyRef}
-                      className={`w-full bg-transparent placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none resize-none overflow-hidden min-h-[160px] ${!isOnline ? 'opacity-50 cursor-not-allowed' : ''
+                      className={`w-full bg-transparent placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none resize-none overflow-hidden min-h-[160px] ${!isOnline || tagFilter === TRASH ? 'opacity-50 cursor-not-allowed' : ''
                         }`}
                       style={{ scrollBehavior: 'unset' }}
                       value={mBody}
-                      onChange={(e) => { if (isOnline) { setMBody(e.target.value); resizeModalTextarea(); } }}
+                      onChange={(e) => { if (isOnline && tagFilter !== TRASH) { setMBody(e.target.value); resizeModalTextarea(); } }}
                       onKeyDown={(e) => {
-                        if (!isOnline) return;
+                        if (!isOnline || tagFilter === TRASH) return;
                         if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
                           const el = mBodyRef.current;
                           const value = mBody;
@@ -5739,8 +5907,8 @@ export default function App() {
                           }
                         }
                       }}
-                      placeholder="Write your note…"
-                      disabled={!isOnline}
+                      placeholder={tagFilter === TRASH ? "" : "Write your note…"}
+                      disabled={!isOnline || tagFilter === TRASH}
                     />
                   </div>
                 )
@@ -6056,8 +6224,10 @@ export default function App() {
                       borderColor: mColor === "default" ? "#d1d5db" : solid(bgFor(mColor, dark, disableTransparency)),
                     }}
                   >
-                    {mColor === "default" && (
+                    {mColor === "default" ? (
                       <div className="w-4 h-4 rounded-full" style={{ backgroundColor: dark ? "#1f2937" : "#fff" }} />
+                    ) : (
+                      <div className="w-3 h-3 rounded-full ring-2 ring-inset ring-white/60 dark:ring-black/40" />
                     )}
                   </button>
                   <Popover
@@ -6133,9 +6303,9 @@ export default function App() {
                 style={{ backgroundColor: dark ? "rgba(40,40,40,0.95)" : "rgba(255,255,255,0.95)" }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <h3 className="text-lg font-semibold mb-2">Delete this note?</h3>
+                <h3 className="text-lg font-semibold mb-2">{tagFilter === TRASH ? "Permanently delete this note?" : "Delete this note?"}</h3>
                 <p className="text-sm text-gray-600 dark:text-gray-300">
-                  This action cannot be undone.
+                  {tagFilter === TRASH ? "This will permanently delete the note. This cannot be undone." : "The note will be moved to trash."}
                 </p>
                 <div className="mt-5 flex justify-end gap-3">
                   <button
@@ -6148,7 +6318,7 @@ export default function App() {
                     className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
                     onClick={async () => { setConfirmDeleteOpen(false); await deleteModal(); }}
                   >
-                    Delete
+                    {tagFilter === TRASH ? "Permanently Delete" : "Delete"}
                   </button>
                 </div>
               </div>
@@ -6666,6 +6836,7 @@ export default function App() {
         // Settings panel
         openSettingsPanel={openSettingsPanel}
         disableTransparency={disableTransparency}
+        emptyTrash={emptyTrash}
       />
       {modal}
 

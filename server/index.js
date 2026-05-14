@@ -191,6 +191,9 @@ CREATE TABLE IF NOT EXISTS note_collaborators (
       if (!names.has("archived")) {
         db.exec(`ALTER TABLE notes ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`);
       }
+      if (!names.has("deleted")) {
+        db.exec(`ALTER TABLE notes ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0`);
+      }
     });
     tx();
   } catch (err) {
@@ -342,10 +345,13 @@ const getNoteById = db.prepare("SELECT * FROM notes WHERE id = ?");
 
 // Notes statements
 const listNotes = db.prepare(
-  `SELECT * FROM notes WHERE user_id = ? AND archived = 0 ORDER BY pinned DESC, position DESC, timestamp DESC`
+  `SELECT * FROM notes WHERE user_id = ? AND archived = 0 AND deleted = 0 ORDER BY pinned DESC, position DESC, timestamp DESC`
 );
 const listArchivedNotes = db.prepare(
-  `SELECT * FROM notes WHERE user_id = ? AND archived = 1 ORDER BY timestamp DESC`
+  `SELECT * FROM notes WHERE user_id = ? AND archived = 1 AND deleted = 0 ORDER BY timestamp DESC`
+);
+const listTrashedNotes = db.prepare(
+  `SELECT * FROM notes WHERE user_id = ? AND deleted = 1 ORDER BY timestamp DESC`
 );
 const listNotesPage = db.prepare(
   `SELECT * FROM notes WHERE user_id = ? ORDER BY pinned DESC, position DESC, timestamp DESC LIMIT ? OFFSET ?`
@@ -403,7 +409,10 @@ const patchPartialWithCollaboration = db.prepare(`
 const patchPosition = db.prepare(`
   UPDATE notes SET position=@position, pinned=@pinned WHERE id=@id AND user_id=@user_id
 `);
-const deleteNote = db.prepare("DELETE FROM notes WHERE id = ? AND user_id = ?");
+const deleteNote = db.prepare("UPDATE notes SET deleted = 1, archived = 0 WHERE id = ? AND user_id = ?");
+const restoreNote = db.prepare("UPDATE notes SET deleted = 0 WHERE id = ? AND user_id = ?");
+const permanentDeleteNote = db.prepare("DELETE FROM notes WHERE id = ? AND user_id = ? AND deleted = 1");
+const emptyTrash = db.prepare("DELETE FROM notes WHERE user_id = ? AND deleted = 1");
 
 // Collaboration statements
 const getUserByEmail = db.prepare("SELECT * FROM users WHERE lower(email)=lower(?)");
@@ -630,7 +639,7 @@ app.get("/api/notes", auth, (req, res) => {
     WHERE (n.user_id = ? OR EXISTS(
       SELECT 1 FROM note_collaborators nc 
       WHERE nc.note_id = n.id AND nc.user_id = ?
-    )) AND n.archived = 0
+    )) AND n.archived = 0 AND n.deleted = 0
     ORDER BY n.pinned DESC, n.position DESC, n.timestamp DESC
   `);
 
@@ -639,7 +648,7 @@ app.get("/api/notes", auth, (req, res) => {
     WHERE (n.user_id = ? OR EXISTS(
       SELECT 1 FROM note_collaborators nc 
       WHERE nc.note_id = n.id AND nc.user_id = ?
-    )) AND n.archived = 0
+    )) AND n.archived = 0 AND n.deleted = 0
     ORDER BY n.pinned DESC, n.position DESC, n.timestamp DESC
     LIMIT ? OFFSET ?
   `);
@@ -778,6 +787,54 @@ app.patch("/api/notes/:id", auth, (req, res) => {
 app.delete("/api/notes/:id", auth, (req, res) => {
   deleteNote.run(req.params.id, req.user.id);
   res.json({ ok: true });
+});
+
+app.post("/api/notes/:id/restore", auth, (req, res) => {
+  const id = req.params.id;
+  const existing = getNote.get(id, req.user.id);
+  if (!existing) {
+    return res.status(404).json({ error: "Note not found" });
+  }
+  restoreNote.run(id, req.user.id);
+  res.json({ ok: true });
+});
+
+app.delete("/api/notes/:id/permanent", auth, (req, res) => {
+  const result = permanentDeleteNote.run(req.params.id, req.user.id);
+  if (result.changes === 0) {
+    return res.status(404).json({ error: "Note not found" });
+  }
+  res.json({ ok: true });
+});
+
+app.delete("/api/notes/trash", auth, (req, res) => {
+  emptyTrash.run(req.user.id);
+  res.json({ ok: true });
+});
+
+app.get("/api/notes/trash", auth, (req, res) => {
+  const rows = listTrashedNotes.all(req.user.id);
+  res.json(
+    rows.map((r) => ({
+      id: r.id,
+      user_id: r.user_id,
+      type: r.type,
+      title: r.title,
+      content: r.content,
+      items: JSON.parse(r.items_json || "[]"),
+      tags: JSON.parse(r.tags_json || "[]"),
+      images: JSON.parse(r.images_json || "[]"),
+      color: r.color,
+      pinned: !!r.pinned,
+      position: r.position,
+      timestamp: r.timestamp,
+      updated_at: r.updated_at,
+      lastEditedBy: r.last_edited_by,
+      lastEditedAt: r.last_edited_at,
+      archived: !!r.archived,
+      deleted: true,
+    }))
+  );
 });
 
 // Reorder within sections
@@ -971,6 +1028,7 @@ app.get("/api/notes/archived", auth, (req, res) => {
   res.json(
     rows.map((r) => ({
       id: r.id,
+      user_id: r.user_id,
       type: r.type,
       title: r.title,
       content: r.content,
